@@ -1,7 +1,7 @@
 {
 	"private": true,
 	"name": "volar",
-	"version": "2.0.6",
+	"version": "2.0.7",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/vuejs/language-tools.git",
@@ -263,7 +263,7 @@
 					"items": {
 						"type": "string"
 					},
-					"default": [],
+					"default": [ ],
 					"description": "List any additional file extensions that should be processed as Vue files (requires restart)."
 				},
 				"vue.doctor.status": {
@@ -293,7 +293,7 @@
 				},
 				"vue.updateImportsOnFileMove.enabled": {
 					"type": "boolean",
-					"default": false,
+					"default": true,
 					"description": "Enabled update imports on file move."
 				},
 				"vue.codeActions.enabled": {
@@ -391,6 +391,11 @@
 		},
 		"commands": [
 			{
+				"command": "vue.action.restartServer",
+				"title": "Restart Vue and TS servers",
+				"category": "Vue"
+			},
+			{
 				"command": "vue.action.doctor",
 				"title": "Doctor",
 				"category": "Vue"
@@ -487,15 +492,14 @@
 	"devDependencies": {
 		"@types/semver": "^7.5.3",
 		"@types/vscode": "^1.82.0",
-		"@volar/vscode": "~2.1.3",
-		"@vue/language-core": "2.0.6",
-		"@vue/language-server": "2.0.6",
-		"@vue/typescript-plugin": "2.0.6",
+		"@volar/vscode": "~2.2.0-alpha.4",
+		"@vue/language-core": "2.0.7",
+		"@vue/language-server": "2.0.7",
+		"@vue/typescript-plugin": "2.0.7",
 		"esbuild": "latest",
 		"esbuild-plugin-copy": "latest",
 		"esbuild-visualizer": "latest",
 		"semver": "^7.5.4",
-		"vsce": "latest",
-		"vscode-languageclient": "^9.0.1"
+		"vsce": "latest"
 	}
 }

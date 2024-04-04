@@ -1,15 +1,6 @@
-import {
-	activateAutoInsertion,
-	activateDocumentDropEdit,
-	activateServerSys,
-	activateWriteVirtualFiles,
-	activateTsConfigStatusItem,
-	activateTsVersionStatusItem,
-	getTsdk,
-} from '@volar/vscode';
 import { DiagnosticModel, VueInitializationOptions } from '@vue/language-server';
 import * as vscode from 'vscode';
-import type * as lsp from 'vscode-languageclient';
+import * as lsp from '@volar/vscode';
 import { config } from './config';
 import * as doctor from './features/doctor';
 import * as nameCasing from './features/nameCasing';
@@ -76,18 +67,19 @@ async function doActivate(context: vscode.ExtensionContext, createLc: CreateLang
 	splitEditors.register(context, client);
 	doctor.register(context, client);
 
-	activateAutoInsertion(selectors, client);
-	activateDocumentDropEdit(selectors, client);
-	activateWriteVirtualFiles('vue.action.writeVirtualFiles', client);
-	activateServerSys(client);
+	lsp.activateAutoInsertion(selectors, client);
+	lsp.activateDocumentDropEdit(selectors, client);
+	lsp.activateWriteVirtualFiles('vue.action.writeVirtualFiles', client);
+	lsp.activateServerSys(client);
 
 	if (!config.server.hybridMode) {
-		activateTsConfigStatusItem(selectors, 'vue.tsconfig', client);
-		activateTsVersionStatusItem(selectors, 'vue.tsversion', context, client, text => 'TS ' + text);
+		lsp.activateTsConfigStatusItem(selectors, 'vue.tsconfig', client);
+		lsp.activateTsVersionStatusItem(selectors, 'vue.tsversion', context, client, text => 'TS ' + text);
 	}
 
 	const hybridModeStatus = vscode.languages.createLanguageStatusItem('vue-hybrid-mode', selectors);
-	hybridModeStatus.text = config.server.hybridMode ? 'Hybrid Mode: Enabled' : 'Hybrid Mode: Disabled';
+	hybridModeStatus.text = 'Hybrid Mode';
+	hybridModeStatus.detail = config.server.hybridMode ? 'Enabled' : 'Disabled';
 	hybridModeStatus.command = {
 		title: 'Open Setting',
 		command: 'workbench.action.openSettings',
@@ -97,14 +89,80 @@ async function doActivate(context: vscode.ExtensionContext, createLc: CreateLang
 		hybridModeStatus.severity = vscode.LanguageStatusSeverity.Warning;
 	}
 
+	const item = vscode.languages.createLanguageStatusItem('vue-insider', 'vue');
+	if (!context.extension.packageJSON.version.includes('-insider')) {
+		item.text = '✨ Get Vue - Official Insiders';
+		item.severity = vscode.LanguageStatusSeverity.Warning;
+		item.command = {
+			title: 'More Info',
+			command: 'vscode.open',
+			arguments: ['https://github.com/vuejs/language-tools/wiki/Get-Insiders'],
+		};
+	}
+	else {
+		const versionsUrl = 'https://cdn.jsdelivr.net/gh/vuejs/language-tools/insiders.json';
+		item.text = '🚀 Vue - Official Insiders';
+		item.detail = 'Installed';
+		item.busy = true;
+		const currentVersion = context.extension.packageJSON.version;
+		fetch(versionsUrl)
+			.then(res => res.json())
+			.then(({ versions }: { versions: { version: string; date: string; }[]; }) => {
+				item.command = {
+					title: 'Select Version',
+					command: 'vue-insiders.selectVersion',
+					arguments: [{ versions }],
+				};
+				if (versions.length && versions[0].version !== currentVersion) {
+					item.command.title = 'Update';
+					item.detail = 'New version available';
+					item.severity = vscode.LanguageStatusSeverity.Warning;
+				}
+			})
+			.catch(() => {
+				item.detail = 'Failed to fetch versions';
+			})
+			.finally(() => {
+				item.busy = false;
+			});
+		vscode.commands.registerCommand('vue-insiders.selectVersion', async ({ versions }: { versions: { version: string; date: string; }[]; }) => {
+			const items = versions.map<vscode.QuickPickItem>(version => ({
+				label: version.version,
+				description: version.date + (version.version === currentVersion ? ' (current)' : ''),
+			}));
+			if (!items.some(item => item.description?.endsWith('(current)'))) {
+				items.push({
+					label: '',
+					kind: vscode.QuickPickItemKind.Separator,
+				}, {
+					label: currentVersion,
+					description: '(current)',
+				});
+			}
+			const selected = await vscode.window.showQuickPick(
+				items,
+				{
+					canPickMany: false,
+					placeHolder: 'Select a version',
+				});
+			if (!selected || selected.label === currentVersion) {
+				return;
+			}
+			const updateUrl = `https://github.com/volarjs/insiders/releases/tag/v${selected.label}`;
+			vscode.env.openExternal(vscode.Uri.parse(updateUrl));
+		});
+	}
+
 	async function requestReloadVscode(msg: string) {
 		const reload = await vscode.window.showInformationMessage(msg, 'Reload Window');
-		if (reload === undefined) return; // cancel
+		if (reload === undefined) {
+			return; // cancel
+		}
 		vscode.commands.executeCommand('workbench.action.reloadWindow');
 	}
 
 	function activateConfigWatcher() {
-		context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((e) => {
+		context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
 			if (e.affectsConfiguration('vue.server.hybridMode') && config.server.hybridMode !== beginHybridMode) {
 				requestReloadVscode(
 					config.server.hybridMode
@@ -113,17 +171,21 @@ async function doActivate(context: vscode.ExtensionContext, createLc: CreateLang
 				);
 			}
 			else if (e.affectsConfiguration('vue')) {
-				vscode.commands.executeCommand('vue.action.restartServer');
+				vscode.commands.executeCommand('vue.action.restartServer', false);
 			}
 		}));
 	}
 
 	async function activateRestartRequest() {
-		context.subscriptions.push(vscode.commands.registerCommand('vue.action.restartServer', async () => {
+		context.subscriptions.push(vscode.commands.registerCommand('vue.action.restartServer', async (restartTsServer: boolean = true) => {
 			await client.stop();
 			outputChannel.clear();
 			client.clientOptions.initializationOptions = await getInitializationOptions(context);
 			await client.start();
+			nameCasing.activate(context, client, selectors);
+			if (restartTsServer) {
+				await vscode.commands.executeCommand('typescript.restartTsServer');
+			}
 		}));
 	}
 }
@@ -150,7 +212,7 @@ async function getInitializationOptions(
 	return {
 		// volar
 		diagnosticModel: config.server.diagnosticModel === 'pull' ? DiagnosticModel.Pull : DiagnosticModel.Push,
-		typescript: { tsdk: (await getTsdk(context)).tsdk },
+		typescript: { tsdk: (await lsp.getTsdk(context)).tsdk },
 		maxFileSize: config.server.maxFileSize,
 		semanticTokensLegend: {
 			tokenTypes: ['component'],

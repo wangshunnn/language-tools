@@ -1,8 +1,7 @@
-import { CodeInformation, Mapping, Segment, StackNode, track } from '@volar/language-core';
+import { Mapping, StackNode, track } from '@volar/language-core';
 import { computed, computedSet } from 'computeds';
 import { generate as generateScript } from '../generators/script';
 import { generate as generateTemplate } from '../generators/template';
-import { enableAllFeatures } from '../generators/utils';
 import { parseScriptRanges } from '../parsers/scriptRanges';
 import { parseScriptSetupRanges } from '../parsers/scriptSetupRanges';
 import type { Code, Sfc, VueLanguagePlugin } from '../types';
@@ -21,22 +20,14 @@ const plugin: VueLanguagePlugin = ctx => {
 		],
 
 		getEmbeddedCodes(fileName, sfc) {
-
 			const tsx = useTsx(fileName, sfc);
 			const files: {
 				id: string;
 				lang: string;
 			}[] = [];
-
 			if (['js', 'ts', 'jsx', 'tsx'].includes(tsx.lang())) {
 				files.push({ id: 'script_' + tsx.lang(), lang: tsx.lang() });
 			}
-
-			if (sfc.template) {
-				files.push({ id: 'template_format', lang: 'ts' });
-				files.push({ id: 'template_style', lang: 'css' });
-			}
-
 			return files;
 		},
 
@@ -48,55 +39,9 @@ const plugin: VueLanguagePlugin = ctx => {
 				const tsx = _tsx.generatedScript();
 				if (tsx) {
 					const [content, contentStacks] = ctx.codegenStack ? track([...tsx.codes], [...tsx.codeStacks]) : [[...tsx.codes], [...tsx.codeStacks]];
-					content.forEach(code => {
-						if (typeof code !== 'string') {
-							code[3].structure = false;
-							code[3].format = false;
-						}
-					});
 					embeddedFile.content = content;
 					embeddedFile.contentStacks = contentStacks;
 					embeddedFile.linkedCodeMappings = [...tsx.linkedCodeMappings];
-				}
-			}
-			else if (embeddedFile.id === 'template_format') {
-
-				embeddedFile.parentCodeId = 'template';
-
-				const template = _tsx.generatedTemplate();
-				if (template) {
-					const [content, contentStacks] = ctx.codegenStack
-						? track([...template.formatCodes], template.formatCodeStacks.map(stack => ({ stack, length: 1 })))
-						: [[...template.formatCodes], template.formatCodeStacks.map(stack => ({ stack, length: 1 }))];
-					embeddedFile.content = content;
-					embeddedFile.contentStacks = contentStacks;
-				}
-
-				for (const style of sfc.styles) {
-					embeddedFile.content.push('\n\n');
-					for (const cssVar of style.cssVars) {
-						embeddedFile.content.push('(');
-						embeddedFile.content.push([
-							cssVar.text,
-							style.name,
-							cssVar.offset,
-							enableAllFeatures({}),
-						]);
-						embeddedFile.content.push(');\n');
-					}
-				}
-			}
-			else if (embeddedFile.id === 'template_style') {
-
-				embeddedFile.parentCodeId = 'template';
-
-				const template = _tsx.generatedTemplate();
-				if (template) {
-					const [content, contentStacks] = ctx.codegenStack
-						? track([...template.cssCodes], template.cssCodeStacks.map(stack => ({ stack, length: 1 })))
-						: [[...template.cssCodes], template.cssCodeStacks.map(stack => ({ stack, length: 1 }))];
-					embeddedFile.content = content as Segment<CodeInformation>[];
-					embeddedFile.contentStacks = contentStacks;
 				}
 			}
 		},
@@ -167,11 +112,7 @@ function createTsx(
 		}
 
 		const tsCodes: Code[] = [];
-		const tsFormatCodes: Code[] = [];
-		const inlineCssCodes: Code[] = [];
 		const tsCodegenStacks: string[] = [];
-		const tsFormatCodegenStacks: string[] = [];
-		const inlineCssCodegenStacks: string[] = [];
 		const codegen = generateTemplate(
 			ts,
 			ctx.compilerOptions,
@@ -188,26 +129,10 @@ function createTsx(
 		let current = codegen.next();
 
 		while (!current.done) {
-			const [type, code, stack] = current.value;
-			if (type === 'ts') {
-				tsCodes.push(code);
-			}
-			else if (type === 'tsFormat') {
-				tsFormatCodes.push(code);
-			}
-			else if (type === 'inlineCss') {
-				inlineCssCodes.push(code);
-			}
+			const [code, stack] = current.value;
+			tsCodes.push(code);
 			if (ctx.codegenStack) {
-				if (type === 'ts') {
-					tsCodegenStacks.push(stack);
-				}
-				else if (type === 'tsFormat') {
-					tsFormatCodegenStacks.push(stack);
-				}
-				else if (type === 'inlineCss') {
-					inlineCssCodegenStacks.push(stack);
-				}
+				tsCodegenStacks.push(stack);
 			}
 			current = codegen.next();
 		}
@@ -216,10 +141,6 @@ function createTsx(
 			...current.value,
 			codes: tsCodes,
 			codeStacks: tsCodegenStacks,
-			formatCodes: tsFormatCodes,
-			formatCodeStacks: tsFormatCodegenStacks,
-			cssCodes: inlineCssCodes,
-			cssCodeStacks: inlineCssCodegenStacks,
 		};
 	});
 	const hasScriptSetupSlots = computed(() => !!scriptSetupRanges()?.slots.define);

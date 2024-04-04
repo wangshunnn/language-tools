@@ -4,7 +4,7 @@ import { capitalize } from '@vue/shared';
 import { _getComponentNames } from './requests/componentInfos';
 
 export function decorateLanguageServiceForVue(
-	files: vue.FileRegistry,
+	language: vue.Language,
 	languageService: ts.LanguageService,
 	vueOptions: vue.VueCompilerOptions,
 	ts: typeof import('typescript'),
@@ -17,8 +17,8 @@ export function decorateLanguageServiceForVue(
 		getEncodedSemanticClassifications,
 	} = languageService;
 
-	languageService.getCompletionsAtPosition = (fileName, position, options) => {
-		const result = getCompletionsAtPosition(fileName, position, options);
+	languageService.getCompletionsAtPosition = (fileName, position, options, formattingSettings) => {
+		const result = getCompletionsAtPosition(fileName, position, options, formattingSettings);
 		if (result) {
 			// filter __VLS_
 			result.entries = result.entries.filter(
@@ -80,13 +80,13 @@ export function decorateLanguageServiceForVue(
 	if (isTsPlugin) {
 		languageService.getEncodedSemanticClassifications = (fileName, span, format) => {
 			const result = getEncodedSemanticClassifications(fileName, span, format);
-			const file = files.get(fileName);
-			if (file?.generated?.code instanceof vue.VueGeneratedCode) {
-				const { template } = file.generated.code.sfc;
+			const file = language.scripts.get(fileName);
+			if (file?.generated?.root instanceof vue.VueGeneratedCode) {
+				const { template } = file.generated.root.sfc;
 				if (template) {
 					for (const componentSpan of getComponentSpans.call(
 						{ typescript: ts, languageService, vueOptions },
-						file.generated.code,
+						file.generated.root,
 						template,
 						{
 							start: span.start - template.startTagEnd,
@@ -123,11 +123,11 @@ export function getComponentSpans(
 		...validComponentNames,
 		...validComponentNames.map(vue.hyphenateTag),
 	]);
-	template.ast?.children.forEach(function visit(node) {
-		if (node.loc.end.offset <= spanTemplateRange.start || node.loc.start.offset >= (spanTemplateRange.start + spanTemplateRange.length)) {
-			return;
-		}
-		if (node.type === 1 satisfies vue.CompilerDOM.NodeTypes.ELEMENT) {
+	if (template.ast) {
+		for (const node of vue.forEachElementNode(template.ast)) {
+			if (node.loc.end.offset <= spanTemplateRange.start || node.loc.start.offset >= (spanTemplateRange.start + spanTemplateRange.length)) {
+				continue;
+			}
 			if (components.has(node.tag)) {
 				let start = node.loc.start.offset;
 				if (template.lang === 'html') {
@@ -144,22 +144,7 @@ export function getComponentSpans(
 					});
 				}
 			}
-			for (const child of node.children) {
-				visit(child);
-			}
 		}
-		else if (node.type === 9 satisfies vue.CompilerDOM.NodeTypes.IF) {
-			for (const branch of node.branches) {
-				for (const child of branch.children) {
-					visit(child);
-				}
-			}
-		}
-		else if (node.type === 11 satisfies vue.CompilerDOM.NodeTypes.FOR) {
-			for (const child of node.children) {
-				visit(child);
-			}
-		}
-	});
+	}
 	return result;
 }

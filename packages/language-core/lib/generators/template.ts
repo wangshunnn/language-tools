@@ -36,15 +36,6 @@ const presetInfos = {
 	slotNameExport: disableAllFeatures({ semantic: { shouldHighlight: () => false }, verification: true, navigation: true, /* __navigationCodeLens: true */ }),
 	refAttr: disableAllFeatures({ navigation: true }),
 };
-const formatBrackets = {
-	normal: ['`${', '}`;'] as [string, string],
-	// fix https://github.com/vuejs/language-tools/issues/3572
-	params: ['(', ') => {}'] as [string, string],
-	// fix https://github.com/vuejs/language-tools/issues/1210
-	// fix https://github.com/vuejs/language-tools/issues/2305
-	curly: ['0 +', '+ 0;'] as [string, string],
-	event: ['() => ', ';'] as [string, string],
-};
 const validTsVarReg = /^[a-zA-Z_$][0-9a-zA-Z_$]*$/;
 const colonReg = /:/g;
 // @ts-ignore
@@ -63,8 +54,6 @@ const transformContext: CompilerDOM.TransformContext = {
 	expressionPlugins: ['typescript'],
 };
 
-type _CodeAndStack = [codeType: 'ts' | 'tsFormat' | 'inlineCss', ...codeAndStack: CodeAndStack];
-
 export function* generate(
 	ts: typeof import('typescript'),
 	compilerOptions: ts.CompilerOptions,
@@ -79,41 +68,39 @@ export function* generate(
 ) {
 
 	const processDirectiveComment = (code: Code) => {
-		if (ignoreError && typeof code !== 'string') {
-			const data = code[3];
-			if (data.verification) {
-				code[3] = {
-					...data,
-					verification: false,
-				};
+		if (typeof code !== 'string') {
+			if (ignoreError) {
+				const data = code[3];
+				if (data.verification) {
+					code[3] = {
+						...data,
+						verification: false,
+					};
+				}
 			}
-		}
-		if (expectErrorToken && typeof code !== 'string') {
-			const token = expectErrorToken;
-			const data = code[3];
-			if (data.verification) {
-				code[3] = {
-					...data,
-					verification: {
-						shouldReport: () => {
-							token.errors++;
-							return false;
+			if (expectErrorToken) {
+				const token = expectErrorToken;
+				const data = code[3];
+				if (data.verification) {
+					code[3] = {
+						...data,
+						verification: {
+							shouldReport: () => {
+								token.errors++;
+								return false;
+							},
 						},
-					},
-				};
+					};
+				}
 			}
+			code[3].structure = false;
+			code[3].format = false;
 		}
 		return code;
 	};
 	const _ts = codegenStack
-		? (code: Code): _CodeAndStack => ['ts', processDirectiveComment(code), getStack()]
-		: (code: Code): _CodeAndStack => ['ts', processDirectiveComment(code), ''];
-	const _tsFormat = codegenStack
-		? (code: Code): _CodeAndStack => ['tsFormat', code, getStack()]
-		: (code: Code): _CodeAndStack => ['tsFormat', code, ''];
-	const _inlineCss = codegenStack
-		? (code: Code): _CodeAndStack => ['inlineCss', code, getStack()]
-		: (code: Code): _CodeAndStack => ['inlineCss', code, ''];
+		? (code: Code): CodeAndStack => [processDirectiveComment(code), getStack()]
+		: (code: Code): CodeAndStack => [processDirectiveComment(code), ''];
 	const nativeTags = new Set(vueCompilerOptions.nativeTags);
 	const slots = new Map<string, {
 		name?: string;
@@ -180,7 +167,7 @@ export function* generate(
 			return tagOffsetsMap;
 		}
 
-		for (const node of eachElementNode(template.ast)) {
+		for (const node of forEachElementNode(template.ast)) {
 			if (node.tag === 'slot') {
 				// ignore
 			}
@@ -218,7 +205,7 @@ export function* generate(
 		return tagOffsetsMap;
 	}
 
-	function* generateExpectErrorComment(): Generator<_CodeAndStack> {
+	function* generateExpectErrorComment(): Generator<CodeAndStack> {
 
 		if (expectErrorToken && expectedErrorNode) {
 			const token = expectErrorToken;
@@ -247,7 +234,7 @@ export function* generate(
 		expectedErrorNode = undefined;
 	}
 
-	function* generateCanonicalComponentName(tagText: string, offset: number, info: VueCodeInformation): Generator<_CodeAndStack> {
+	function* generateCanonicalComponentName(tagText: string, offset: number, info: VueCodeInformation): Generator<CodeAndStack> {
 		if (validTsVarReg.test(tagText)) {
 			yield _ts([tagText, 'template', offset, info]);
 		}
@@ -260,7 +247,7 @@ export function* generate(
 		}
 	}
 
-	function* generateSlotsType(): Generator<_CodeAndStack> {
+	function* generateSlotsType(): Generator<CodeAndStack> {
 		for (const [exp, slot] of slotExps) {
 			hasSlot = true;
 			yield _ts(`Partial<Record<NonNullable<typeof ${exp}>, (_: typeof ${slot.varName}) => any>> &\n`);
@@ -286,7 +273,7 @@ export function* generate(
 		yield _ts(`}`);
 	}
 
-	function* generateStyleScopedClasses(): Generator<_CodeAndStack> {
+	function* generateStyleScopedClasses(): Generator<CodeAndStack> {
 		yield _ts(`if (typeof __VLS_styleScopedClasses === 'object' && !Array.isArray(__VLS_styleScopedClasses)) {\n`);
 		for (const { className, offset } of scopedClasses) {
 			yield _ts(`__VLS_styleScopedClasses[`);
@@ -303,7 +290,7 @@ export function* generate(
 		yield _ts('}\n');
 	}
 
-	function* generatePreResolveComponents(): Generator<_CodeAndStack> {
+	function* generatePreResolveComponents(): Generator<CodeAndStack> {
 
 		yield _ts(`let __VLS_resolvedLocalAndGlobalComponents!: {}\n`);
 
@@ -401,7 +388,7 @@ export function* generate(
 		parentEl: CompilerDOM.ElementNode | undefined,
 		prevNode: CompilerDOM.TemplateChildNode | undefined,
 		componentCtxVar: string | undefined,
-	): Generator<_CodeAndStack> {
+	): Generator<CodeAndStack> {
 
 		yield* generateExpectErrorComment();
 
@@ -454,21 +441,7 @@ export function* generate(
 		}
 		else if (node.type === CompilerDOM.NodeTypes.INTERPOLATION) {
 			// {{ ... }}
-
-			let content = node.content.loc.source;
-			let start = node.content.loc.start.offset;
-			let leftCharacter: string;
-			let rightCharacter: string;
-
-			// fix https://github.com/vuejs/language-tools/issues/1787
-			while ((leftCharacter = template.content.substring(start - 1, start)).trim() === '' && leftCharacter.length) {
-				start--;
-				content = leftCharacter + content;
-			}
-			while ((rightCharacter = template.content.substring(start + content.length, start + content.length + 1)).trim() === '' && rightCharacter.length) {
-				content = content + rightCharacter;
-			}
-
+			const [content, start] = parseInterpolationNode(node, template.content);
 			yield* generateInterpolation(
 				content,
 				node.content.loc,
@@ -476,15 +449,6 @@ export function* generate(
 				presetInfos.all,
 				'(',
 				');\n',
-			);
-			const lines = content.split('\n');
-			yield* generateTsFormat(
-				content,
-				start,
-				lines.length <= 1 ? formatBrackets.curly : [
-					lines[0].trim() === '' ? '(' : formatBrackets.curly[0],
-					lines[lines.length - 1].trim() === '' ? ')' : formatBrackets.curly[1],
-				],
 			);
 		}
 		else if (node.type === CompilerDOM.NodeTypes.IF) {
@@ -500,7 +464,7 @@ export function* generate(
 		}
 	}
 
-	function* generateVIf(node: CompilerDOM.IfNode, parentEl: CompilerDOM.ElementNode | undefined, componentCtxVar: string | undefined): Generator<_CodeAndStack> {
+	function* generateVIf(node: CompilerDOM.IfNode, parentEl: CompilerDOM.ElementNode | undefined, componentCtxVar: string | undefined): Generator<CodeAndStack> {
 
 		let originalBlockConditionsLength = blockConditions.length;
 
@@ -537,12 +501,6 @@ export function* generate(
 					)
 				);
 				addedBlockCondition = true;
-
-				yield* generateTsFormat(
-					branch.condition.content,
-					branch.condition.loc.start.offset,
-					formatBrackets.normal,
-				);
 			}
 
 			yield _ts(` {\n`);
@@ -565,17 +523,15 @@ export function* generate(
 		blockConditions.length = originalBlockConditionsLength;
 	}
 
-	function* generateVFor(node: CompilerDOM.ForNode, parentEl: CompilerDOM.ElementNode | undefined, componentCtxVar: string | undefined): Generator<_CodeAndStack> {
-
-		const { source, value, key, index } = node.parseResult;
-		const leftExpressionRange = value ? { start: (value ?? key ?? index).loc.start.offset, end: (index ?? key ?? value).loc.end.offset } : undefined;
-		const leftExpressionText = leftExpressionRange ? node.loc.source.substring(leftExpressionRange.start - node.loc.start.offset, leftExpressionRange.end - node.loc.start.offset) : undefined;
+	function* generateVFor(node: CompilerDOM.ForNode, parentEl: CompilerDOM.ElementNode | undefined, componentCtxVar: string | undefined): Generator<CodeAndStack> {
+		const { source } = node.parseResult;
+		const { leftExpressionRange, leftExpressionText } = parseVForNode(node);
 		const forBlockVars: string[] = [];
 
 		yield _ts(`for (const [`);
 		if (leftExpressionRange && leftExpressionText) {
 
-			const collectAst = createTsAst(node.parseResult, `const [${leftExpressionText}]`);
+			const collectAst = createTsAst(ts, node.parseResult, `const [${leftExpressionText}]`);
 			collectVars(ts, collectAst, collectAst, forBlockVars);
 
 			for (const varName of forBlockVars) {
@@ -583,7 +539,6 @@ export function* generate(
 			}
 
 			yield _ts([leftExpressionText, 'template', leftExpressionRange.start, presetInfos.all]);
-			yield* generateTsFormat(leftExpressionText, leftExpressionRange.start, formatBrackets.normal);
 		}
 		yield _ts(`] of __VLS_getVForSourceType`);
 		if (source.type === CompilerDOM.NodeTypes.SIMPLE_EXPRESSION) {
@@ -608,12 +563,6 @@ export function* generate(
 
 			yield* generateExtraAutoImport();
 			yield _ts('}\n');
-
-			yield* generateTsFormat(
-				source.content,
-				source.loc.start.offset,
-				formatBrackets.normal,
-			);
 		}
 
 		for (const varName of forBlockVars) {
@@ -621,7 +570,7 @@ export function* generate(
 		}
 	}
 
-	function* generateElement(node: CompilerDOM.ElementNode, parentEl: CompilerDOM.ElementNode | undefined, componentCtxVar: string | undefined): Generator<_CodeAndStack> {
+	function* generateElement(node: CompilerDOM.ElementNode, parentEl: CompilerDOM.ElementNode | undefined, componentCtxVar: string | undefined): Generator<CodeAndStack> {
 
 		yield _ts(`{\n`);
 
@@ -808,17 +757,7 @@ export function* generate(
 				')',
 			);
 			yield _ts(';\n');
-			const fb = formatBrackets.normal;
-			if (fb) {
-				yield* generateTsFormat(
-					failedExp.loc.source,
-					failedExp.loc.start.offset,
-					fb,
-				);
-			}
 		}
-
-		yield* generateInlineCss(props);
 
 		const vScope = props.find(prop => prop.type === CompilerDOM.NodeTypes.DIRECTIVE && (prop.name === 'scope' || prop.name === 'data'));
 		let inScope = false;
@@ -872,13 +811,7 @@ export function* generate(
 			let hasProps = false;
 			if (slotDir?.exp?.type === CompilerDOM.NodeTypes.SIMPLE_EXPRESSION) {
 
-				yield* generateTsFormat(
-					slotDir.exp.content,
-					slotDir.exp.loc.start.offset,
-					formatBrackets.params,
-				);
-
-				const slotAst = createTsAst(slotDir, `(${slotDir.exp.content}) => {}`);
+				const slotAst = createTsAst(ts, slotDir, `(${slotDir.exp.content}) => {}`);
 				collectVars(ts, slotAst, slotAst, slotBlockVars);
 				hasProps = true;
 				if (slotDir.exp.content.indexOf(':') === -1) {
@@ -988,7 +921,7 @@ export function* generate(
 		yield _ts(`}\n`);
 	}
 
-	function* generateEvents(node: CompilerDOM.ElementNode, componentVar: string, componentInstanceVar: string, eventsVar: string, used: () => void): Generator<_CodeAndStack> {
+	function* generateEvents(node: CompilerDOM.ElementNode, componentVar: string, componentInstanceVar: string, eventsVar: string, used: () => void): Generator<CodeAndStack> {
 
 		for (const prop of node.props) {
 			if (
@@ -1093,44 +1026,19 @@ export function* generate(
 					')}',
 				);
 				yield _ts(';\n');
-				yield* generateTsFormat(
-					prop.exp.content,
-					prop.exp.loc.start.offset,
-					formatBrackets.normal,
-				);
 			}
 		}
 	}
 
-	function* appendExpressionNode(prop: CompilerDOM.DirectiveNode): Generator<_CodeAndStack> {
+	function* appendExpressionNode(prop: CompilerDOM.DirectiveNode): Generator<CodeAndStack> {
 		if (prop.exp?.type === CompilerDOM.NodeTypes.SIMPLE_EXPRESSION) {
-
-			const ast = createTsAst(prop.exp, prop.exp.content);
-			let isCompoundExpression = true;
-
-			if (ast.statements.length === 1) {
-				ts.forEachChild(ast, child_1 => {
-					if (ts.isExpressionStatement(child_1)) {
-						ts.forEachChild(child_1, child_2 => {
-							if (ts.isArrowFunction(child_2)) {
-								isCompoundExpression = false;
-							}
-							else if (ts.isIdentifier(child_2)) {
-								isCompoundExpression = false;
-							}
-						});
-					}
-					else if (ts.isFunctionDeclaration(child_1)) {
-						isCompoundExpression = false;
-					}
-				});
-			}
-
 			let prefix = '(';
 			let suffix = ')';
 			let isFirstMapping = true;
 
-			if (isCompoundExpression) {
+			const ast = createTsAst(ts, prop.exp, prop.exp.content);
+			const _isCompoundExpression = isCompoundExpression(ts, ast);
+			if (_isCompoundExpression) {
 
 				yield _ts('$event => {\n');
 				localVars.set('$event', (localVars.get('$event') ?? 0) + 1);
@@ -1147,7 +1055,7 @@ export function* generate(
 				prop.exp.loc,
 				prop.exp.loc.start.offset,
 				() => {
-					if (isCompoundExpression && isFirstMapping) {
+					if (_isCompoundExpression && isFirstMapping) {
 						isFirstMapping = false;
 						return presetInfos.allWithHiddenParam;
 					}
@@ -1157,26 +1065,20 @@ export function* generate(
 				suffix,
 			);
 
-			if (isCompoundExpression) {
+			if (_isCompoundExpression) {
 				localVars.set('$event', localVars.get('$event')! - 1);
 
 				yield _ts(';\n');
 				yield* generateExtraAutoImport();
 				yield _ts('}\n');
 			}
-
-			yield* generateTsFormat(
-				prop.exp.content,
-				prop.exp.loc.start.offset,
-				isCompoundExpression ? formatBrackets.event : formatBrackets.normal,
-			);
 		}
 		else {
 			yield _ts(`() => {}`);
 		}
 	}
 
-	function* generateProps(node: CompilerDOM.ElementNode, props: CompilerDOM.ElementNode['props'], mode: 'normal' | 'extraReferences', propsFailedExps?: CompilerDOM.SimpleExpressionNode[]): Generator<_CodeAndStack> {
+	function* generateProps(node: CompilerDOM.ElementNode, props: CompilerDOM.ElementNode['props'], mode: 'normal' | 'extraReferences', propsFailedExps?: CompilerDOM.SimpleExpressionNode[]): Generator<CodeAndStack> {
 
 		let styleAttrNum = 0;
 		let classAttrNum = 0;
@@ -1285,14 +1187,6 @@ export function* generate(
 							'(',
 							')',
 						);
-
-						if (mode === 'normal') {
-							yield* generateTsFormat(
-								prop.exp.loc.source,
-								prop.exp.loc.start.offset,
-								formatBrackets.normal,
-							);
-						}
 					} else {
 						const propVariableName = camelize(prop.exp.loc.source);
 
@@ -1407,13 +1301,6 @@ export function* generate(
 				);
 				yield _ts(['', 'template', prop.exp.loc.end.offset, presetInfos.diagnosticOnly]);
 				yield _ts(', ');
-				if (mode === 'normal') {
-					yield* generateTsFormat(
-						prop.exp.content,
-						prop.exp.loc.start.offset,
-						formatBrackets.normal,
-					);
-				}
 			}
 			else {
 				// comment this line to avoid affecting comments in prop expressions
@@ -1422,37 +1309,7 @@ export function* generate(
 		}
 	}
 
-	function* generateInlineCss(props: CompilerDOM.ElementNode['props']): Generator<_CodeAndStack> {
-		for (const prop of props) {
-			if (
-				prop.type === CompilerDOM.NodeTypes.DIRECTIVE
-				&& prop.name === 'bind'
-				&& prop.arg?.type === CompilerDOM.NodeTypes.SIMPLE_EXPRESSION
-				&& prop.exp?.type === CompilerDOM.NodeTypes.SIMPLE_EXPRESSION
-				&& prop.arg.content === 'style'
-				&& prop.exp.constType === CompilerDOM.ConstantTypes.CAN_STRINGIFY
-			) {
-				const endCrt = prop.arg.loc.source[prop.arg.loc.source.length - 1]; // " | '
-				const start = prop.arg.loc.source.indexOf(endCrt) + 1;
-				const end = prop.arg.loc.source.lastIndexOf(endCrt);
-				const content = prop.arg.loc.source.substring(start, end);
-
-				yield _inlineCss(`x { `);
-				yield _inlineCss([
-					content,
-					'template',
-					prop.arg.loc.start.offset + start,
-					enableAllFeatures({
-						format: false,
-						structure: false,
-					}),
-				]);
-				yield _inlineCss(` }\n`);
-			}
-		}
-	}
-
-	function* generateDirectives(node: CompilerDOM.ElementNode): Generator<_CodeAndStack> {
+	function* generateDirectives(node: CompilerDOM.ElementNode): Generator<CodeAndStack> {
 		for (const prop of node.props) {
 			if (
 				prop.type === CompilerDOM.NodeTypes.DIRECTIVE
@@ -1475,11 +1332,6 @@ export function* generate(
 						')',
 					);
 					yield _ts(';\n');
-					yield* generateTsFormat(
-						prop.arg.content,
-						prop.arg.loc.start.offset,
-						formatBrackets.normal,
-					);
 				}
 
 				yield _ts(['', 'template', prop.loc.start.offset, presetInfos.diagnosticOnly]);
@@ -1515,11 +1367,6 @@ export function* generate(
 						')',
 					);
 					yield _ts(['', 'template', prop.exp.loc.end.offset, presetInfos.diagnosticOnly]);
-					yield* generateTsFormat(
-						prop.exp.content,
-						prop.exp.loc.start.offset,
-						formatBrackets.normal,
-					);
 				}
 				else {
 					yield _ts('undefined');
@@ -1531,7 +1378,7 @@ export function* generate(
 		}
 	}
 
-	function* generateReferencesForElements(node: CompilerDOM.ElementNode): Generator<_CodeAndStack> {
+	function* generateReferencesForElements(node: CompilerDOM.ElementNode): Generator<CodeAndStack> {
 		for (const prop of node.props) {
 			if (
 				prop.type === CompilerDOM.NodeTypes.ATTRIBUTE
@@ -1552,7 +1399,7 @@ export function* generate(
 		}
 	}
 
-	function* generateReferencesForScopedCssClasses(node: CompilerDOM.ElementNode): Generator<_CodeAndStack> {
+	function* generateReferencesForScopedCssClasses(node: CompilerDOM.ElementNode): Generator<CodeAndStack> {
 		for (const prop of node.props) {
 			if (
 				prop.type === CompilerDOM.NodeTypes.ATTRIBUTE
@@ -1593,7 +1440,7 @@ export function* generate(
 		}
 	}
 
-	function* generateSlot(node: CompilerDOM.ElementNode, startTagOffset: number): Generator<_CodeAndStack> {
+	function* generateSlot(node: CompilerDOM.ElementNode, startTagOffset: number): Generator<CodeAndStack> {
 
 		const varSlot = `__VLS_${elementIndex++}`;
 		const slotNameExpNode = getSlotNameExpNode();
@@ -1754,7 +1601,7 @@ export function* generate(
 		}
 	}
 
-	function* generateExtraAutoImport(): Generator<_CodeAndStack> {
+	function* generateExtraAutoImport(): Generator<CodeAndStack> {
 
 		if (!tempVars.length) {
 			return;
@@ -1777,7 +1624,7 @@ export function* generate(
 		tempVars.length = 0;
 	}
 
-	function* generateAttrValue(attrNode: CompilerDOM.TextNode, info: VueCodeInformation): Generator<_CodeAndStack> {
+	function* generateAttrValue(attrNode: CompilerDOM.TextNode, info: VueCodeInformation): Generator<CodeAndStack> {
 		const char = attrNode.loc.source.startsWith("'") ? "'" : '"';
 		yield _ts(char);
 		let start = attrNode.loc.start.offset;
@@ -1802,7 +1649,7 @@ export function* generate(
 		yield _ts(char);
 	}
 
-	function* generateCamelized(code: string, offset: number, info: VueCodeInformation): Generator<_CodeAndStack> {
+	function* generateCamelized(code: string, offset: number, info: VueCodeInformation): Generator<CodeAndStack> {
 		const parts = code.split('-');
 		for (let i = 0; i < parts.length; i++) {
 			const part = parts[i];
@@ -1822,25 +1669,7 @@ export function* generate(
 		}
 	}
 
-	function* generateTsFormat(code: string, offset: number, formatWrapper: [string, string]): Generator<_CodeAndStack> {
-		yield _tsFormat(formatWrapper[0]);
-		yield _tsFormat([
-			code,
-			'template',
-			offset,
-			mergeFeatureSettings(
-				presetInfos.disabledAll,
-				{
-					format: true,
-					// autoInserts: true, // TODO: support vue-autoinsert-parentheses
-				},
-			),
-		]);
-		yield _tsFormat(formatWrapper[1]);
-		yield _tsFormat('\n');
-	}
-
-	function* generateObjectProperty(code: string, offset: number, info: VueCodeInformation, astHolder?: any, shouldCamelize = false): Generator<_CodeAndStack> {
+	function* generateObjectProperty(code: string, offset: number, info: VueCodeInformation, astHolder?: any, shouldCamelize = false): Generator<CodeAndStack> {
 		if (code.startsWith('[') && code.endsWith(']') && astHolder) {
 			yield* generateInterpolation(code, astHolder, offset, info, '', '');
 		}
@@ -1873,9 +1702,9 @@ export function* generate(
 		data: VueCodeInformation | (() => VueCodeInformation) | undefined,
 		prefix: string,
 		suffix: string,
-	): Generator<_CodeAndStack> {
+	): Generator<CodeAndStack> {
 		const code = prefix + _code + suffix;
-		const ast = createTsAst(astHolder, code);
+		const ast = createTsAst(ts, astHolder, code);
 		const vars: {
 			text: string,
 			isShorthand: boolean,
@@ -1932,7 +1761,7 @@ export function* generate(
 		}
 	}
 
-	function* generatePropertyAccess(code: string, offset?: number, info?: VueCodeInformation, astHolder?: any): Generator<_CodeAndStack> {
+	function* generatePropertyAccess(code: string, offset?: number, info?: VueCodeInformation, astHolder?: any): Generator<CodeAndStack> {
 		if (!compilerOptions.noPropertyAccessFromIndexSignature && validTsVarReg.test(code)) {
 			yield _ts('.');
 			yield _ts(offset !== undefined && info
@@ -1949,7 +1778,7 @@ export function* generate(
 		}
 	}
 
-	function* generateStringLiteralKey(code: string, offset?: number, info?: VueCodeInformation): Generator<_CodeAndStack> {
+	function* generateStringLiteralKey(code: string, offset?: number, info?: VueCodeInformation): Generator<CodeAndStack> {
 		if (offset === undefined || !info) {
 			yield _ts(`"${code}"`);
 		}
@@ -1961,14 +1790,77 @@ export function* generate(
 			yield _ts(['', 'template', offset + code.length, disableAllFeatures({ __combineLastMapping: true })]);
 		}
 	}
+}
 
-	function createTsAst(astHolder: any, text: string) {
-		if (astHolder.__volar_ast_text !== text) {
-			astHolder.__volar_ast_text = text;
-			astHolder.__volar_ast = ts.createSourceFile('/a.ts', text, 99 satisfies ts.ScriptTarget.ESNext);
-		}
-		return astHolder.__volar_ast as ts.SourceFile;
+export function createTsAst(ts: typeof import('typescript'), astHolder: any, text: string) {
+	if (astHolder.__volar_ast_text !== text) {
+		astHolder.__volar_ast_text = text;
+		astHolder.__volar_ast = ts.createSourceFile('/a.ts', text, 99 satisfies ts.ScriptTarget.ESNext);
 	}
+	return astHolder.__volar_ast as ts.SourceFile;
+}
+
+export function isCompoundExpression(ts: typeof import('typescript'), ast: ts.SourceFile,) {
+	let result = true;
+	if (ast.statements.length === 1) {
+		ts.forEachChild(ast, child_1 => {
+			if (ts.isExpressionStatement(child_1)) {
+				ts.forEachChild(child_1, child_2 => {
+					if (ts.isArrowFunction(child_2)) {
+						result = false;
+					}
+					else if (ts.isIdentifier(child_2)) {
+						result = false;
+					}
+				});
+			}
+			else if (ts.isFunctionDeclaration(child_1)) {
+				result = false;
+			}
+		});
+	}
+	return result;
+}
+
+export function parseInterpolationNode(node: CompilerDOM.InterpolationNode, template: string) {
+	let content = node.content.loc.source;
+	let start = node.content.loc.start.offset;
+	let leftCharacter: string;
+	let rightCharacter: string;
+
+	// fix https://github.com/vuejs/language-tools/issues/1787
+	while ((leftCharacter = template.substring(start - 1, start)).trim() === '' && leftCharacter.length) {
+		start--;
+		content = leftCharacter + content;
+	}
+	while ((rightCharacter = template.substring(start + content.length, start + content.length + 1)).trim() === '' && rightCharacter.length) {
+		content = content + rightCharacter;
+	}
+
+	return [
+		content,
+		start,
+	] as const;
+}
+
+export function parseVForNode(node: CompilerDOM.ForNode) {
+	const { value, key, index } = node.parseResult;
+	const leftExpressionRange = (value || key || index)
+		? {
+			start: (value ?? key ?? index)!.loc.start.offset,
+			end: (index ?? key ?? value)!.loc.end.offset,
+		}
+		: undefined;
+	const leftExpressionText = leftExpressionRange
+		? node.loc.source.substring(
+			leftExpressionRange.start - node.loc.start.offset,
+			leftExpressionRange.end - node.loc.start.offset
+		)
+		: undefined;
+	return {
+		leftExpressionRange,
+		leftExpressionText,
+	};
 }
 
 function getCanonicalComponentName(tagText: string) {
@@ -1986,21 +1878,21 @@ function getPossibleOriginalComponentNames(tagText: string) {
 	])];
 }
 
-export function* eachElementNode(node: CompilerDOM.RootNode | CompilerDOM.TemplateChildNode): Generator<CompilerDOM.ElementNode> {
+export function* forEachElementNode(node: CompilerDOM.RootNode | CompilerDOM.TemplateChildNode): Generator<CompilerDOM.ElementNode> {
 	if (node.type === CompilerDOM.NodeTypes.ROOT) {
 		for (const child of node.children) {
-			yield* eachElementNode(child);
+			yield* forEachElementNode(child);
 		}
 	}
 	else if (node.type === CompilerDOM.NodeTypes.ELEMENT) {
 		const patchForNode = getVForNode(node);
 		if (patchForNode) {
-			yield* eachElementNode(patchForNode);
+			yield* forEachElementNode(patchForNode);
 		}
 		else {
 			yield node;
 			for (const child of node.children) {
-				yield* eachElementNode(child);
+				yield* forEachElementNode(child);
 			}
 		}
 	}
@@ -2009,14 +1901,14 @@ export function* eachElementNode(node: CompilerDOM.RootNode | CompilerDOM.Templa
 		for (let i = 0; i < node.branches.length; i++) {
 			const branch = node.branches[i];
 			for (const childNode of branch.children) {
-				yield* eachElementNode(childNode);
+				yield* forEachElementNode(childNode);
 			}
 		}
 	}
 	else if (node.type === CompilerDOM.NodeTypes.FOR) {
 		// v-for
 		for (const child of node.children) {
-			yield* eachElementNode(child);
+			yield* forEachElementNode(child);
 		}
 	}
 }

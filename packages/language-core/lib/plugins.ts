@@ -5,7 +5,9 @@ import useVueSfcCustomBlocks from './plugins/vue-sfc-customblocks';
 import useVueSfcScriptsFormat from './plugins/vue-sfc-scripts';
 import useVueSfcStyles from './plugins/vue-sfc-styles';
 import useVueSfcTemplate from './plugins/vue-sfc-template';
-import useHtmlTemplatePlugin from './plugins/vue-template-html';
+import useVueTemplateHtmlPlugin from './plugins/vue-template-html';
+import useVueTemplateInlineCssPlugin from './plugins/vue-template-inline-css';
+import useVueTemplateInlineTsPlugin from './plugins/vue-template-inline-ts';
 import useVueTsx from './plugins/vue-tsx';
 import { pluginVersion, type VueLanguagePlugin } from './types';
 
@@ -15,7 +17,9 @@ export function getDefaultVueLanguagePlugins(pluginContext: Parameters<VueLangua
 		useMdFilePlugin, // .md for VitePress
 		useHtmlFilePlugin, // .html for PetiteVue
 		useVueFilePlugin, // .vue and others for Vue
-		useHtmlTemplatePlugin,
+		useVueTemplateHtmlPlugin,
+		useVueTemplateInlineCssPlugin,
+		useVueTemplateInlineTsPlugin,
 		useVueSfcStyles,
 		useVueSfcCustomBlocks,
 		useVueSfcScriptsFormat,

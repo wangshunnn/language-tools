@@ -1,6 +1,6 @@
 import type { Connection } from '@volar/language-server';
 import { createConnection, createServer, createSimpleProjectProviderFactory, createTypeScriptProjectProviderFactory, loadTsdkByPath } from '@volar/language-server/node';
-import { ParsedCommandLine, VueCompilerOptions, createParsedCommandLine, createVueLanguagePlugin, parse, resolveVueCompilerOptions } from '@vue/language-core';
+import { ParsedCommandLine, VueCompilerOptions, createParsedCommandLine, createVueLanguagePlugin, parse, resolveCommonLanguageId, resolveVueCompilerOptions } from '@vue/language-core';
 import { ServiceEnvironment, convertAttrName, convertTagName, createDefaultGetTsPluginClient, createVueServicePlugins, detect } from '@vue/language-service';
 import { DetectNameCasingRequest, GetConvertAttrCasingEditsRequest, GetConvertTagCasingEditsRequest, ParseSFCRequest } from './lib/protocol';
 import type { VueInitializationOptions } from './lib/types';
@@ -23,10 +23,9 @@ connection.onInitialize(async params => {
 
 	const options: VueInitializationOptions = params.initializationOptions;
 	const hybridMode = options.vue?.hybridMode ?? true;
+	const vueFileExtensions: string[] = ['vue'];
 
 	tsdk = loadTsdkByPath(options.typescript.tsdk, params.locale);
-
-	const vueFileExtensions: string[] = ['vue'];
 
 	if (options.vue?.additionalExtensions) {
 		for (const additionalExtension of options.vue.additionalExtensions) {
@@ -48,6 +47,20 @@ connection.onInitialize(async params => {
 			: createTypeScriptProjectProviderFactory(tsdk.typescript, tsdk.diagnosticMessages),
 		{
 			watchFileExtensions: ['js', 'cjs', 'mjs', 'ts', 'cts', 'mts', 'jsx', 'tsx', 'json', ...vueFileExtensions],
+			getLanguageId(uri) {
+				if (vueFileExtensions.some(ext => uri.endsWith(`.${ext}`))) {
+					if (uri.endsWith('.html')) {
+						return 'html';
+					}
+					else if (uri.endsWith('.md')) {
+						return 'markdown';
+					}
+					else {
+						return 'vue';
+					}
+				}
+				return resolveCommonLanguageId(uri);
+			},
 			getServicePlugins() {
 				return createVueServicePlugins(
 					tsdk.typescript,
@@ -60,27 +73,16 @@ connection.onInitialize(async params => {
 				const commandLine = await parseCommandLine();
 				const vueOptions = commandLine?.vueOptions ?? resolveVueCompilerOptions({});
 				for (const ext of vueFileExtensions) {
-					if (vueOptions.extensions.includes(`.${ext}`)) {
+					if (!vueOptions.extensions.includes(`.${ext}`)) {
 						vueOptions.extensions.push(`.${ext}`);
 					}
 				}
 				const vueLanguagePlugin = createVueLanguagePlugin(
 					tsdk.typescript,
 					serviceEnv.typescript!.uriToFileName,
-					fileName => {
-						if (projectContext.typescript?.sys.useCaseSensitiveFileNames ?? false) {
-							return projectContext.typescript?.host.getScriptFileNames().includes(fileName) ?? false;
-						}
-						else {
-							const lowerFileName = fileName.toLowerCase();
-							for (const rootFile of projectContext.typescript?.host.getScriptFileNames() ?? []) {
-								if (rootFile.toLowerCase() === lowerFileName) {
-									return true;
-								}
-							}
-							return false;
-						}
-					},
+					projectContext.typescript?.sys.useCaseSensitiveFileNames ?? false,
+					() => projectContext.typescript?.host.getProjectVersion?.() ?? '',
+					() => projectContext.typescript?.host.getScriptFileNames() ?? [],
 					commandLine?.options ?? {},
 					vueOptions,
 					options.codegenStack,

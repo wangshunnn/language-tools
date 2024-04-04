@@ -1,5 +1,5 @@
 import { TypeScriptProjectHost, createLanguageService, resolveCommonLanguageId } from '@volar/language-service';
-import { createLanguage } from '@volar/typescript';
+import { createTypeScriptLanguage } from '@volar/typescript';
 import * as path from 'path';
 import * as ts from 'typescript';
 import { URI } from 'vscode-uri';
@@ -18,30 +18,23 @@ function createTester(rootUri: string) {
 	parsedCommandLine.fileNames = parsedCommandLine.fileNames.map(fileName => fileName.replace(/\\/g, '/'));
 	const scriptSnapshots = new Map<string, ts.IScriptSnapshot>();
 	const projectHost: TypeScriptProjectHost = {
+		...ts.sys,
+		configFileName: realTsConfig,
 		getCurrentDirectory: () => rootPath,
 		getProjectVersion: () => '0',
 		getScriptFileNames: () => parsedCommandLine.fileNames,
 		getCompilationSettings: () => parsedCommandLine.options,
 		getScriptSnapshot,
 		getLanguageId: resolveCommonLanguageId,
+		scriptIdToFileName: serviceEnv.typescript!.uriToFileName,
+		fileNameToScriptId: serviceEnv.typescript!.fileNameToUri,
 	};
 	const vueLanguagePlugin = createVueLanguagePlugin(
 		ts,
 		serviceEnv.typescript!.uriToFileName,
-		fileName => {
-			if (ts.sys.useCaseSensitiveFileNames) {
-				return projectHost.getScriptFileNames().includes(fileName);
-			}
-			else {
-				const lowerFileName = fileName.toLowerCase();
-				for (const rootFile of projectHost.getScriptFileNames()) {
-					if (rootFile.toLowerCase() === lowerFileName) {
-						return true;
-					}
-				}
-				return false;
-			}
-		},
+		ts.sys.useCaseSensitiveFileNames,
+		() => projectHost.getProjectVersion?.() ?? '',
+		() => projectHost.getScriptFileNames(),
 		parsedCommandLine.options,
 		parsedCommandLine.vueOptions,
 	);
@@ -54,16 +47,10 @@ function createTester(rootUri: string) {
 		'vue.inlayHints.inlineHandlerLeading': true,
 	};
 	let currentVSCodeSettings: any;
-	const language = createLanguage(
+	const language = createTypeScriptLanguage(
 		ts,
-		ts.sys,
 		[vueLanguagePlugin],
-		realTsConfig,
 		projectHost,
-		{
-			fileIdToFileName: serviceEnv.typescript!.uriToFileName,
-			fileNameToFileId: serviceEnv.typescript!.fileNameToUri,
-		},
 	);
 	const languageService = createLanguageService(language, vueServicePlugins, serviceEnv);
 

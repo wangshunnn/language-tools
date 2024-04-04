@@ -2,7 +2,7 @@ import { createLabsInfo } from '@volar/vscode';
 import * as serverLib from '@vue/language-server';
 import * as fs from 'fs';
 import * as vscode from 'vscode';
-import * as lsp from 'vscode-languageclient/node';
+import * as lsp from '@volar/vscode/node';
 import { activate as commonActivate, deactivate as commonDeactivate } from './common';
 import { config } from './config';
 import { middleware } from './middleware';
@@ -83,7 +83,7 @@ export async function activate(context: vscode.ExtensionContext) {
 		vscode.window.showWarningMessage(
 			'Takeover mode is no longer needed since v2. Please enable the "TypeScript and JavaScript Language Features" extension.',
 			'Show Extension'
-		).then((selected) => {
+		).then(selected => {
 			if (selected) {
 				vscode.commands.executeCommand('workbench.extensions.search', '@builtin typescript-language-features');
 			}
@@ -94,7 +94,7 @@ export async function activate(context: vscode.ExtensionContext) {
 		vscode.window.showWarningMessage(
 			`The "${vueTsPluginExtension.packageJSON.displayName}" extension is no longer needed since v2. Please uninstall it.`,
 			'Show Extension'
-		).then((selected) => {
+		).then(selected => {
 			if (selected) {
 				vscode.commands.executeCommand('workbench.extensions.search', vueTsPluginExtension.id);
 			}
@@ -141,14 +141,6 @@ try {
 			// @ts-expect-error
 			let text = readFileSync(...args) as string;
 
-			// VSCode < 1.87.0
-			text = text.replace('t.$u=[t.$r,t.$s,t.$p,t.$q]', s => s + '.concat("vue")'); // patch jsTsLanguageModes
-			text = text.replace('.languages.match([t.$p,t.$q,t.$r,t.$s]', s => s + '.concat("vue")'); // patch isSupportedLanguageMode
-
-			// VSCode >= 1.87.0
-			text = text.replace('t.jsTsLanguageModes=[t.javascript,t.javascriptreact,t.typescript,t.typescriptreact]', s => s + '.concat("vue")'); // patch jsTsLanguageModes
-			text = text.replace('.languages.match([t.typescript,t.typescriptreact,t.javascript,t.javascriptreact]', s => s + '.concat("vue")'); // patch isSupportedLanguageMode
-
 			if (!hybridMode) {
 				// patch readPlugins
 				text = text.replace(
@@ -159,6 +151,15 @@ try {
 						'Array.isArray(e.languages)',
 					].join(''),
 				);
+			}
+			else {
+				// VSCode < 1.87.0
+				text = text.replace('t.$u=[t.$r,t.$s,t.$p,t.$q]', s => s + '.concat("vue")'); // patch jsTsLanguageModes
+				text = text.replace('.languages.match([t.$p,t.$q,t.$r,t.$s]', s => s + '.concat("vue")'); // patch isSupportedLanguageMode
+
+				// VSCode >= 1.87.0
+				text = text.replace('t.jsTsLanguageModes=[t.javascript,t.javascriptreact,t.typescript,t.typescriptreact]', s => s + '.concat("vue")'); // patch jsTsLanguageModes
+				text = text.replace('.languages.match([t.typescript,t.typescriptreact,t.javascript,t.javascriptreact]', s => s + '.concat("vue")'); // patch isSupportedLanguageMode
 			}
 
 			return text;
